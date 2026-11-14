@@ -58,6 +58,13 @@ func (s *Selection) AddBack() *Selection {
 // It returns a new Selection object containing the current Selection combined
 // with the filtered previous one
 func (s *Selection) AddBackFiltered(selector string) *Selection {
+	if s.prevSel == nil {
+		// No previous set on the stack (e.g. a document-root selection, a
+		// Selection created by Clone, or an End() past the chain head): behave
+		// like the unfiltered AddBack and return the current set unchanged
+		// instead of dereferencing the nil previous selection.
+		return s.AddSelection(nil)
+	}
 	return s.AddSelection(s.prevSel.Filter(selector))
 }
 
@@ -66,5 +73,10 @@ func (s *Selection) AddBackFiltered(selector string) *Selection {
 // It returns a new Selection object containing the current Selection combined
 // with the filtered previous one
 func (s *Selection) AddBackMatcher(m Matcher) *Selection {
+	if s.prevSel == nil {
+		// See AddBackFiltered: keep parity with the unfiltered AddBack when
+		// there is no previous set on the stack.
+		return s.AddSelection(nil)
+	}
 	return s.AddSelection(s.prevSel.FilterMatcher(m))
 }

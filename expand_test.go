@@ -2,6 +2,8 @@ package goquery
 
 import (
 	"testing"
+
+	"github.com/andybalholm/cascadia"
 )
 
 func TestAdd(t *testing.T) {
@@ -115,4 +117,100 @@ func TestAddBackFilteredRollback(t *testing.T) {
 	sel := Doc().Find(".span12, .footer")
 	sel2 := sel.Find("h1").AddBackFiltered(".footer").End().End()
 	assertEqual(t, sel, sel2)
+}
+
+// TestAddBackNilPrevSelMatrix covers the empty-fallback cases where there is
+// no previous selection on the stack: a chain starting at the document root,
+// a Selection produced by Clone, and an End() that falls back past the chain
+// head. In every such scenario the filtered forms must converge to the same
+// safe result as the unfiltered AddBack - return the current set instead of
+// panicking on the nil previous selection.
+func TestAddBackNilPrevSelMatrix(t *testing.T) {
+	scenarios := []struct {
+		name string
+		sel  func() *Selection
+	}{
+		{
+			name: "document root",
+			sel:  func() *Selection { return Doc().Selection },
+		},
+		{
+			name: "cloned selection",
+			sel:  func() *Selection { return Doc().Find(".pvk-content").Clone() },
+		},
+		{
+			name: "end past chain head",
+			sel:  func() *Selection { return Doc().Find(".pvk-content").End() },
+		},
+	}
+
+	forms := []struct {
+		name string
+		fn   func(*Selection) *Selection
+	}{
+		{
+			name: "unfiltered",
+			fn:   func(s *Selection) *Selection { return s.AddBack() },
+		},
+		{
+			name: "filtered",
+			fn:   func(s *Selection) *Selection { return s.AddBackFiltered("div") },
+		},
+		{
+			name: "matcher",
+			fn: func(s *Selection) *Selection {
+				return s.AddBackMatcher(cascadia.MustCompile("div"))
+			},
+		},
+	}
+
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			for _, form := range forms {
+				t.Run(form.name, func(t *testing.T) {
+					src := sc.sel()
+					if src.prevSel != nil {
+						t.Fatalf("%s: expected nil prevSel, got %v", sc.name, src.prevSel)
+					}
+
+					// None of the forms may panic on the empty fallback.
+					got := form.fn(src)
+
+					// The empty fallback must keep the current set verbatim:
+					// same length, same node pointers in the same order.
+					if len(got.Nodes) != len(src.Nodes) {
+						t.Fatalf("expected %d nodes, got %d", len(src.Nodes), len(got.Nodes))
+					}
+					for i, n := range got.Nodes {
+						if n != src.Nodes[i] {
+							t.Fatalf("node %d: expected current set to be returned verbatim, got a different node", i)
+						}
+					}
+
+					// Filtered and unfiltered forms must produce the same set.
+					want := src.AddBack()
+					if len(got.Nodes) != len(want.Nodes) {
+						t.Fatalf("filtered form returned %d nodes, unfiltered form %d", len(got.Nodes), len(want.Nodes))
+					}
+					for i := range got.Nodes {
+						if got.Nodes[i] != want.Nodes[i] {
+							t.Fatalf("node %d: filtered form diverges from unfiltered AddBack", i)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestAddBackNilPrevSelEmptySet checks the empty current set variant of the
+// nil-prevSel fallback: an empty cloned selection must also return safely.
+func TestAddBackNilPrevSelEmptySet(t *testing.T) {
+	src := Doc().Find(".pvk-zzcontentzz").Clone()
+	if src.prevSel != nil {
+		t.Fatalf("expected nil prevSel, got %v", src.prevSel)
+	}
+	assertLength(t, src.AddBack().Nodes, 0)
+	assertLength(t, src.AddBackFiltered("div").Nodes, 0)
+	assertLength(t, src.AddBackMatcher(cascadia.MustCompile("div")).Nodes, 0)
 }
